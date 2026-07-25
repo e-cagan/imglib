@@ -43,6 +43,52 @@ namespace imglib
 
     std::optional<Image> load_ppm(const std::string& path)
     {
-        return std::nullopt;
+        // Open file in binary mode
+        std::ifstream file(path, std::ios::binary);
+        if (!file)
+        {
+            return std::nullopt;
+        }
+
+        // Read the magic number and validate
+        std::string magic;
+        file >> magic;
+        if (magic != "P6")
+        {
+            return std::nullopt;
+        }
+
+        // Read the width, height and maxval
+        std::size_t width; 
+        std::size_t height; 
+        int maxval;
+        file >> width >> height >> maxval;
+        if (!file || width == 0 || height == 0)
+        {
+            return std::nullopt;
+        } 
+        if (maxval != 255)
+        {
+            return std::nullopt;
+        }
+        
+        // Construct the image
+        Image result(width, height, 3);
+        file.ignore(1);     // Skip the last '\n'
+
+        for (size_t y = 0; y < height; y++)
+        {
+            for (size_t x = 0; x < width; x++)
+            {
+                for (uint8_t c = 0; c < 3; c++)
+                {
+                    // Write pixel information to the file
+                    int byte = file.get();
+                    result(x, y, c) = static_cast<uint8_t>(byte);
+                }
+            }
+        }
+
+        return result;
     }
 }
