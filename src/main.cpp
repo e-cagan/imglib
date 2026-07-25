@@ -1,22 +1,34 @@
 #include <iostream>
 #include <imglib/image.hpp>
 #include <imglib/ppm.hpp>
+#include <imglib/filters.hpp>
 
 int main()
 {
-    // Save
-    imglib::Image img(2, 2, 3);
-    img(0, 0, 0) = 255;
-    imglib::save_ppm("test.ppm", img);
+    imglib::Image img(1, 3, 3);
 
-    // Load back
-    auto loaded = imglib::load_ppm("test.ppm");
-    if (!loaded) { std::cout << "load failed\n"; return 1; }
+    // Assign pixel values
+    // red
+    img(0,0,0)=255;
+    img(0,0,1)=0;
+    img(0,0,2)=0;
+    // green
+    img(0,1,0)=0;
+    img(0,1,1)=255;
+    img(0,1,2)=0;
+    // white
+    img(0,2,0)=255;
+    img(0,2,1)=255;
+    img(0,2,2)=255;
 
-    // Validate and compare the images
-    std::cout << "width: " << loaded->width() << "\n";                            // 2
-    std::cout << "pixel(0,0,0): " << static_cast<int>((*loaded)(0,0,0)) << "\n";  // 255
-    std::cout << "pixel(1,1,0): " << static_cast<int>((*loaded)(0,1,0)) << "\n";  // 0
+    // Grayscale the image
+    auto gray = imglib::to_grayscale(img);
+    std::cout << static_cast<int>(gray(0,0,0)) << "\n";  // ~76
+    std::cout << static_cast<int>(gray(0,1,0)) << "\n";  // ~150
+    std::cout << static_cast<int>(gray(0,2,0)) << "\n";  // 255
+
+    // Check the channel amount
+    std::cout << "Num Channels: " << int(gray.channels()) << "\n";
     
     return 0;
 }
