@@ -17,13 +17,20 @@ namespace imglib
         std::size_t width = img.width();
         std::size_t height = img.height();
         uint8_t channels = img.channels();
-        if (channels != 3)
+
+        // Write ppm prefixed file for 3 and 1 channels
+        if (channels == 3)
+        {
+            file << "P6\n" << width << " " << height << "\n" << 255 << "\n";
+        }
+        else if (channels == 1)
+        {
+            file << "P5\n" << width << " " << height << "\n" << 255 << "\n";
+        }
+        else
         {
             return false;
         }
-
-        // Write ppm prefixed file
-        file << "P6\n" << width << " " << height << "\n" << 255 << "\n";
 
         for (size_t y = 0; y < height; y++)
         {
@@ -53,7 +60,7 @@ namespace imglib
         // Read the magic number and validate
         std::string magic;
         file >> magic;
-        if (magic != "P6")
+        if (magic != "P6" && magic != "P5")
         {
             return std::nullopt;
         }
@@ -71,16 +78,17 @@ namespace imglib
         {
             return std::nullopt;
         }
-        
-        // Construct the image
-        Image result(width, height, 3);
         file.ignore(1);     // Skip the last '\n'
+        
+        // Construct the image based on channels
+        uint8_t channels = (magic == "P6") ? 3 : 1;
+        Image result(width, height, channels);
 
         for (size_t y = 0; y < height; y++)
         {
             for (size_t x = 0; x < width; x++)
             {
-                for (uint8_t c = 0; c < 3; c++)
+                for (uint8_t c = 0; c < channels; c++)
                 {
                     // Write pixel information to the file
                     int byte = file.get();
