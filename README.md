@@ -4,8 +4,8 @@ A minimal image-processing library written from scratch in C++17 — no OpenCV, 
 image libraries. The goal is not feature coverage but understanding: every design decision
 here is deliberate and defensible.
 
-The library currently provides an `Image` type and PPM (P6) file I/O. Filters
-(grayscale, box blur, Sobel) are the next stage.
+The library currently provides an `Image` type, PPM/PGM file I/O (P6 and P5), and two
+filters (`to_grayscale`, `box_blur`). Sobel edge detection is the next filter.
 
 ---
 
@@ -25,9 +25,11 @@ imglib/
 ├── CMakeLists.txt
 ├── include/imglib/
 │   ├── image.hpp      # Image class (interface + inline bodies)
-│   └── ppm.hpp        # load_ppm / save_ppm declarations
+│   ├── ppm.hpp        # load_ppm / save_ppm declarations
+│   └── filters.hpp    # to_grayscale / box_blur declarations
 └── src/
     ├── ppm.cpp        # load_ppm / save_ppm definitions
+    ├── filters.cpp    # to_grayscale / box_blur definitions
     └── main.cpp       # test / demo driver
 ```
 
@@ -136,6 +138,9 @@ Image(size_t width, size_t height, uint8_t channels)
   syntax is ambiguous); the initializer list has the parameters in hand.
 - Members are initialized in **declaration order**, not the order written in the list.
   `pixels_` is declared last, so the dimensions it depends on are already set.
+- A useful side effect: the constructor zero-fills the buffer, so a freshly constructed
+  `Image` is all-black. Tests can paint only the pixels they care about and rely on the
+  rest being 0.
 
 ### PPM I/O as free functions, not member functions
 
@@ -150,6 +155,17 @@ Image(size_t width, size_t height, uint8_t channels)
   interface and Python has no compile-time cost — but even PIL separates each format
   internally.)
 
+### P5 and P6 share one code path
+
+`save_ppm` / `load_ppm` handle both P6 (3-channel RGB, `.ppm`) and P5 (1-channel grayscale,
+`.pgm`). The channel count is **derived from the magic number**, never passed as an argument:
+P6 → 3, P5 → 1.
+
+- The data is self-describing — the file already states its format. Asking the caller to
+  supply the channel count would be redundant (they'd have to open the file to know) and
+  unsafe (a caller/file mismatch produces garbage).
+- The pixel loops iterate over `channels`, so the same loop serves both formats.
+
 ### Failure signalling
 
 - `load_ppm` returns `std::optional<Image>` — every `Image` is a valid image, so it cannot
@@ -158,13 +174,29 @@ Image(size_t width, size_t height, uint8_t channels)
   exceptional one, and C++ exceptions were deliberately left out of this stage's scope.
 - `save_ppm` returns `bool` — it produces no value, only success/failure.
 
+### Filters signal invalid input by returning the source unchanged
+
+`to_grayscale` and `box_blur` both return `Image` (not `optional<Image>`), and on invalid
+input they return `src` unchanged:
+
+- `to_grayscale` on a non-3-channel image → returns `src`.
+- `box_blur` with an even or non-positive kernel size → returns `src`.
+
+Reasoning:
+- Filters are meant to be **chained** (`box_blur(to_grayscale(img), 5)`). Returning
+  `optional<Image>` would break the chain — each call would need unwrapping. Invalid filter
+  input is a *programming* error, not the *external, expected* failure that `optional` is for.
+- Returning `src` keeps both filters consistent with each other and never destroys data
+  (unlike returning a blank image). This is a deliberate, uniform contract, revisited under
+  the refactor TODO (assert vs. `expected` vs. current behaviour).
+
 ### `const` placement
 
 `const` is decided per position by asking "will *I* modify this / am I promising the caller
 not to touch it", not applied as a blanket rule.
 
-- Parameters (`const std::string& path`, `const Image& img`) are const: the function reads
-  them but promises not to change them.
+- Parameters (`const std::string& path`, `const Image& img`, `const Image& src`) are const:
+  the function reads them but promises not to change them.
 - Return values are **not** const: the caller will process the returned image (e.g. apply a
   filter), so it must be free to modify it.
 
@@ -178,11 +210,42 @@ the parser.
 
 ---
 
+## Filters
+
+### `to_grayscale` — RGB → single channel
+
+A **point operation**: each output pixel depends only on its own input pixel. Uses the
+BT.601 luma formula `0.299·R + 0.587·G + 0.114·B`, chosen over a naive `(R+G+B)/3` average
+because it reflects human perceptual sensitivity (most sensitive to green, least to blue).
+Intermediate value is computed in `float`, rounded with `std::round`, then narrowed to
+`uint8_t`. Output is 1-channel.
+
+### `box_blur` — neighbourhood average
+
+A **neighbourhood operation**: each output pixel is the mean of its NxN window — the first
+filter where a pixel's output depends on its neighbours.
+
+- **Kernel size must be odd** (3, 5, 7…): the window needs a centre pixel. Even/non-positive
+  sizes are rejected (return `src`), matching OpenCV's behaviour of rejecting even kernels.
+  `radius = kernel_size / 2`.
+- **Border handling: clamp (replicate).** Out-of-range neighbour coordinates are pulled to
+  the nearest valid pixel. Chosen over zero-pad (darkens edges — an artefact), crop (changes
+  output size), and reflect (more complex). Clamp gives least information loss with no visible
+  artefact.
+- **Signed coordinate arithmetic.** Neighbour offsets can be negative (`-radius`), but
+  coordinates are `size_t` (unsigned). `x + dx` in unsigned arithmetic underflows to a huge
+  value. So coordinates are computed as `int`, clamped, then cast back to `size_t`.
+- **Accumulator is `float`, not `uint8_t`.** A window sum exceeds 255 (e.g. 9·255 for 3×3),
+  which would overflow a byte.
+- Output preserves the input channel count (unlike `to_grayscale`), and each channel is
+  blurred independently.
+
+---
+
 ## Known Limitations (deliberate scope cuts for Stage 1)
 
 These are conscious boundaries, not oversights:
 
-- **Only P6 (3-channel RGB)** is supported. P5 (grayscale) is rejected.
 - **Only `maxval == 255`** is accepted.
 - **Header comments (`#...`)** — legal in real PPM files — are not handled.
 - **Whitespace assumption:** after `maxval`, exactly one byte is skipped (`ignore(1)`),
@@ -190,14 +253,16 @@ These are conscious boundaries, not oversights:
 - **`operator()` is unchecked** — out-of-range access is undefined behaviour.
 - **Copy/move semantics are compiler-generated** — currently correct (deep copy, inherited
   from `std::vector`) but not yet deliberately designed.
+- **Filters return `src` on invalid input** — a silent fallback, not an error signal (see
+  refactor TODO).
 
 ---
 
 ## Future TODO
 
-**Stage 1 completion — filters (next):**
-- [ ] `to_grayscale` (RGB → single channel)
-- [ ] `box_blur`
+**Stage 1 completion — filters:**
+- [x] `to_grayscale` (RGB → single channel)
+- [x] `box_blur`
 - [ ] `sobel` (edge detection)
 
 **Rule of five / move semantics:**
@@ -206,7 +271,6 @@ These are conscious boundaries, not oversights:
       to introduce it.
 
 **Robustness (lift the scope cuts above):**
-- [ ] Support P5 (grayscale) alongside P6
 - [ ] Handle header comments (`#`)
 - [ ] Robust header whitespace parsing (replace `ignore(1)`)
 - [ ] Add a checked accessor `at(x, y, c)` alongside `operator()`
@@ -218,6 +282,11 @@ These are conscious boundaries, not oversights:
       `write`/`read`). Weigh against widening the `Image` interface.
 - [ ] The index computation is duplicated across the two `operator()` overloads; the const
       version can delegate, or a private helper can hold it.
+- [ ] Unify the filter error strategy: `return src` vs. `assert` vs. `expected<Image, Error>`
+      (C++23). Currently `return src` for consistency; revisit once the library has a
+      coherent error policy.
+- [ ] `box_blur` is O(w·h·k²). A separable blur (horizontal then vertical pass) is O(w·h·k)
+      and much faster for large kernels.
 
 **Later stages:**
 - [ ] Stage 2: proper unit tests (Catch2 / doctest), a CLI argument parser
