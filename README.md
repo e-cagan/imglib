@@ -4,8 +4,8 @@ A minimal image-processing library written from scratch in C++17 — no OpenCV, 
 image libraries. The goal is not feature coverage but understanding: every design decision
 here is deliberate and defensible.
 
-The library currently provides an `Image` type, PPM/PGM file I/O (P6 and P5), and two
-filters (`to_grayscale`, `box_blur`). Sobel edge detection is the next filter.
+The library currently provides an `Image` type, PPM/PGM file I/O (P6 and P5), and three
+filters (`to_grayscale`, `box_blur`, `sobel`).
 
 ---
 
@@ -26,10 +26,10 @@ imglib/
 ├── include/imglib/
 │   ├── image.hpp      # Image class (interface + inline bodies)
 │   ├── ppm.hpp        # load_ppm / save_ppm declarations
-│   └── filters.hpp    # to_grayscale / box_blur declarations
+│   └── filters.hpp    # to_grayscale / box_blur / sobel declarations
 └── src/
     ├── ppm.cpp        # load_ppm / save_ppm definitions
-    ├── filters.cpp    # to_grayscale / box_blur definitions
+    ├── filters.cpp    # to_grayscale / box_blur / sobel definitions
     └── main.cpp       # test / demo driver
 ```
 
@@ -176,17 +176,18 @@ P6 → 3, P5 → 1.
 
 ### Filters signal invalid input by returning the source unchanged
 
-`to_grayscale` and `box_blur` both return `Image` (not `optional<Image>`), and on invalid
-input they return `src` unchanged:
+`to_grayscale`, `box_blur`, and `sobel` all return `Image` (not `optional<Image>`), and on
+invalid input they return `src` unchanged:
 
 - `to_grayscale` on a non-3-channel image → returns `src`.
 - `box_blur` with an even or non-positive kernel size → returns `src`.
+- `sobel` on a non-1-channel image → returns `src`.
 
 Reasoning:
-- Filters are meant to be **chained** (`box_blur(to_grayscale(img), 5)`). Returning
+- Filters are meant to be **chained** (`sobel(to_grayscale(img))`). Returning
   `optional<Image>` would break the chain — each call would need unwrapping. Invalid filter
   input is a *programming* error, not the *external, expected* failure that `optional` is for.
-- Returning `src` keeps both filters consistent with each other and never destroys data
+- Returning `src` keeps all filters consistent with each other and never destroys data
   (unlike returning a blank image). This is a deliberate, uniform contract, revisited under
   the refactor TODO (assert vs. `expected` vs. current behaviour).
 
@@ -211,6 +212,10 @@ the parser.
 ---
 
 ## Filters
+
+All three are free functions taking `const Image&` and returning a new `Image` (never
+mutating the source — the `const&` parameter makes that a compiler-enforced guarantee, and a
+separate output buffer avoids corrupting not-yet-read neighbours mid-pass).
 
 ### `to_grayscale` — RGB → single channel
 
@@ -240,6 +245,27 @@ filter where a pixel's output depends on its neighbours.
 - Output preserves the input channel count (unlike `to_grayscale`), and each channel is
   blurred independently.
 
+### `sobel` — edge detection
+
+A **gradient operation**: measures how fast brightness changes. Flat regions give ~0 (dark
+output); sharp edges give high values (bright output).
+
+- **Input must be 1-channel** (non-1-channel → return `src`). Gradient is meaningful on
+  brightness, not colour — so callers grayscale first: `sobel(to_grayscale(img))`. Keeping
+  the conversion out of `sobel` preserves single responsibility and chainability.
+- **Two fixed 3×3 kernels**, `sobel_x` and `sobel_y`, applied to the same window: each
+  neighbour is multiplied by its kernel weight and summed into `gx` / `gy` (unlike `box_blur`,
+  which just sums). Kernel index maps the `[-1, +1]` offset to `[0, 2]` via `[dy+1][dx+1]`.
+- **Gradients are `int`, not `uint8_t`.** Sobel weights include negatives, so `gx` / `gy` can
+  go negative — an unsigned type would wrap.
+- **Magnitude and clamp.** The two gradients combine as `sqrt(gx² + gy²)`, always positive but
+  able to exceed 255 on strong edges — so it is clamped to `[0, 255]` before narrowing. Reuses
+  the same clamped-coordinate border handling as `box_blur`.
+- Output is 1-channel.
+
+Validated on a synthetic vertical edge (left half 0, right half 255): the edge map reads
+`0 255 255 0` across the boundary — zero in the flat regions, saturated at the transition.
+
 ---
 
 ## Known Limitations (deliberate scope cuts for Stage 1)
@@ -263,7 +289,7 @@ These are conscious boundaries, not oversights:
 **Stage 1 completion — filters:**
 - [x] `to_grayscale` (RGB → single channel)
 - [x] `box_blur`
-- [ ] `sobel` (edge detection)
+- [x] `sobel` (edge detection)
 
 **Rule of five / move semantics:**
 - [ ] Explicitly design copy and move constructors / assignment (learncpp 15, 22). Filters
