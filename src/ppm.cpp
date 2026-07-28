@@ -97,6 +97,11 @@ namespace imglib
             }
         }
 
+        // Check the file again in order to break while reading
+        if (!file) {
+            return std::nullopt;
+        }
+
         return result;
     }
 }
