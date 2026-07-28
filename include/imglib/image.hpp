@@ -43,5 +43,10 @@ namespace imglib
         {
             return channels_;
         }
+
+        const uint8_t* data() const
+        { 
+            return pixels_.data(); 
+        }
     };
 }
