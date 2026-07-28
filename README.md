@@ -142,6 +142,25 @@ Image(size_t width, size_t height, uint8_t channels)
   `Image` is all-black. Tests can paint only the pixels they care about and rely on the
   rest being 0.
 
+### Rule of Zero — no hand-written copy/move/destructor
+
+`Image` declares no copy constructor, move constructor, assignment operators, or destructor.
+Its only resource-owning member is `std::vector<uint8_t>`, which already manages its own
+memory correctly, so the compiler-generated special members are correct by construction:
+copy does a deep copy (via the vector's copy constructor), move transfers ownership (via the
+vector's move constructor). Writing them by hand would at best duplicate what the compiler
+does and at worst introduce a bug.
+
+This was verified empirically: temporary instrumented copy/move constructors (printing
+"COPY"/"MOVE") showed that `Image b = a;` triggers a deep copy, `Image c = std::move(a);`
+triggers a move (single buffer, ownership transferred, source emptied), and a filter's
+`return result;` triggers a move rather than a copy — cheap, no pixel data duplicated. The
+instrumentation was then removed; the class is optimal without it.
+
+(Note: filters have two return paths — `return src;` and `return result;` — which prevents
+full return-value optimization, so the return moves rather than eliding entirely. A move is
+cheap enough that unifying the return path for RVO isn't worth it.)
+
 ### PPM I/O as free functions, not member functions
 
 `load_ppm` and `save_ppm` are free functions (`imglib::load_ppm(...)`), not methods on `Image`.
@@ -277,8 +296,6 @@ These are conscious boundaries, not oversights:
 - **Whitespace assumption:** after `maxval`, exactly one byte is skipped (`ignore(1)`),
   which assumes a single `\n`. Multiple or mixed whitespace in the header would break it.
 - **`operator()` is unchecked** — out-of-range access is undefined behaviour.
-- **Copy/move semantics are compiler-generated** — currently correct (deep copy, inherited
-  from `std::vector`) but not yet deliberately designed.
 - **Filters return `src` on invalid input** — a silent fallback, not an error signal (see
   refactor TODO).
 
@@ -290,11 +307,7 @@ These are conscious boundaries, not oversights:
 - [x] `to_grayscale` (RGB → single channel)
 - [x] `box_blur`
 - [x] `sobel` (edge detection)
-
-**Rule of five / move semantics:**
-- [ ] Explicitly design copy and move constructors / assignment (learncpp 15, 22). Filters
-      return an `Image` by value, which makes move semantics observable — the natural place
-      to introduce it.
+- [x] Rule of Zero verified (copy/move behaviour measured, no hand-written special members needed)
 
 **Robustness (lift the scope cuts above):**
 - [ ] Handle header comments (`#`)
