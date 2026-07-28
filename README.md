@@ -4,8 +4,8 @@ A minimal image-processing library written from scratch in C++17 — no OpenCV, 
 image libraries. The goal is not feature coverage but understanding: every design decision
 here is deliberate and defensible.
 
-The library currently provides an `Image` type, PPM/PGM file I/O (P6 and P5), and three
-filters (`to_grayscale`, `box_blur`, `sobel`).
+The library provides an `Image` type, PPM/PGM file I/O (P6 and P5), three filters
+(`to_grayscale`, `box_blur`, `sobel`), and a doctest-based unit test suite.
 
 ---
 
@@ -15,7 +15,8 @@ filters (`to_grayscale`, `box_blur`, `sobel`).
 mkdir build && cd build
 cmake ..
 cmake --build .
-./imglib_test
+./imglib_test      # demo driver
+./unit_tests       # doctest suite
 ```
 
 Requires a C++17 compiler. `build/` is generated and not tracked in git.
@@ -27,10 +28,13 @@ imglib/
 │   ├── image.hpp      # Image class (interface + inline bodies)
 │   ├── ppm.hpp        # load_ppm / save_ppm declarations
 │   └── filters.hpp    # to_grayscale / box_blur / sobel declarations
-└── src/
-    ├── ppm.cpp        # load_ppm / save_ppm definitions
-    ├── filters.cpp    # to_grayscale / box_blur / sobel definitions
-    └── main.cpp       # test / demo driver
+├── src/
+│   ├── ppm.cpp        # load_ppm / save_ppm definitions
+│   ├── filters.cpp    # to_grayscale / box_blur / sobel definitions
+│   └── main.cpp       # test / demo driver
+└── tests/
+    ├── doctest.h      # single-header test framework
+    └── tests.cpp      # unit tests
 ```
 
 ---
@@ -192,6 +196,11 @@ P6 → 3, P5 → 1.
   nothing". Chosen over exceptions: a corrupt file is an *expected* outcome, not an
   exceptional one, and C++ exceptions were deliberately left out of this stage's scope.
 - `save_ppm` returns `bool` — it produces no value, only success/failure.
+- `load_ppm` validates at five points (file open, magic number, dimensions, maxval, and —
+  after the pixel loop — a truncated-file check via `if (!file)`), returning `nullopt` at
+  each. The last check was added after a unit test caught that a header-valid but
+  pixel-truncated file was silently accepted (`file.get()` returns EOF, which cast to
+  `uint8_t` became 255) instead of rejected.
 
 ### Filters signal invalid input by returning the source unchanged
 
@@ -287,6 +296,25 @@ Validated on a synthetic vertical edge (left half 0, right half 255): the edge m
 
 ---
 
+## Tests
+
+A doctest-based suite (`tests/tests.cpp`, run via `./unit_tests`) — 37 assertions across four
+cases. Tests treat each function as a black box: set up an input, call the function, check the
+output. They never inspect internals.
+
+- **Image basics** — dimensions, zero-initialization, pixel write/read.
+- **`load_ppm` failure paths** — one test per validation branch: nonexistent file, invalid
+  magic, zero dimensions, invalid maxval, truncated pixel data. Each writes a deliberately
+  malformed file, then asserts `nullopt`. (Writing a valid header but omitting pixel bytes is
+  how the truncated-file bug above was caught.)
+- **Round-trip** — build an `Image`, `save_ppm`, `load_ppm`, compare values, for both P6 and P5.
+- **Filter happy paths** — grayscale (red→76, green→150, white→255), box_blur (single
+  point→28), sobel (vertical edge→`0 255 255 0`).
+- **Filter edge cases** — each filter's `return src` contract (wrong channel count, even kernel)
+  and box_blur on a 1×1 image.
+
+---
+
 ## Known Limitations (deliberate scope cuts for Stage 1)
 
 These are conscious boundaries, not oversights:
@@ -303,17 +331,25 @@ These are conscious boundaries, not oversights:
 
 ## Future TODO
 
-**Stage 1 completion — filters:**
-- [x] `to_grayscale` (RGB → single channel)
-- [x] `box_blur`
-- [x] `sobel` (edge detection)
-- [x] Rule of Zero verified (copy/move behaviour measured, no hand-written special members needed)
+**Stage 1 — core (done):**
+- [x] `Image`, PPM/PGM I/O (P6 + P5)
+- [x] `to_grayscale`, `box_blur`, `sobel`
+- [x] Rule of Zero verified (copy/move behaviour measured empirically)
+
+**Stage 2 — tooling:**
+- [x] Unit tests (doctest): Image, PPM round-trip, filters, failure paths
+- [ ] CLI argument parser (load → filter → save from the command line)
 
 **Robustness (lift the scope cuts above):**
 - [ ] Handle header comments (`#`)
 - [ ] Robust header whitespace parsing (replace `ignore(1)`)
 - [ ] Add a checked accessor `at(x, y, c)` alongside `operator()`
-- [ ] Per-byte EOF checking in the pixel-read loop
+- [ ] Per-byte EOF checking in the pixel-read loop (currently one post-loop `!file` check)
+
+**Test hygiene:**
+- [ ] Tests leave scratch files (`bad_magic.ppm`, `rt6.ppm`, …) in the build dir — clean up
+      with `std::remove`, or write to a temp dir.
+- [ ] `.gitignore` the generated `*.ppm` / `*.pgm` scratch files.
 
 **Refactoring:**
 - [ ] The three nested pixel loops are duplicated in `save_ppm` and `load_ppm`. A bulk
@@ -326,8 +362,9 @@ These are conscious boundaries, not oversights:
       coherent error policy.
 - [ ] `box_blur` is O(w·h·k²). A separable blur (horizontal then vertical pass) is O(w·h·k)
       and much faster for large kernels.
+- [ ] The failure-path tests share a "write malformed file, expect nullopt" shape — a small
+      helper could collapse them.
 
-**Later stages:**
-- [ ] Stage 2: proper unit tests (Catch2 / doctest), a CLI argument parser
-- [ ] Stage 3: Qt viewer — display an image, apply filters via buttons
-- [ ] Stage 4: video — replace the file source with a GStreamer / RTSP stream
+**Stage 3 — Qt viewer:** display an image, apply filters via buttons.
+
+**Stage 4 — video:** replace the file source with a GStreamer / RTSP stream.
