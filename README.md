@@ -5,7 +5,8 @@ image libraries. The goal is not feature coverage but understanding: every desig
 here is deliberate and defensible.
 
 The library provides an `Image` type, PPM/PGM file I/O (P6 and P5), three filters
-(`to_grayscale`, `box_blur`, `sobel`), and a doctest-based unit test suite.
+(`to_grayscale`, `box_blur`, `sobel`), a doctest-based unit test suite, and a Qt5 GUI viewer
+that loads an image, applies filters via buttons, and saves the result.
 
 ---
 
@@ -17,6 +18,7 @@ cmake ..
 cmake --build .
 ./imglib_test      # demo driver
 ./unit_tests       # doctest suite
+./viewer           # Qt GUI (requires qtbase5-dev)
 ```
 
 Requires a C++17 compiler. `build/` is generated and not tracked in git.
@@ -32,9 +34,13 @@ imglib/
 │   ├── ppm.cpp        # load_ppm / save_ppm definitions
 │   ├── filters.cpp    # to_grayscale / box_blur / sobel definitions
 │   └── main.cpp       # test / demo driver
-└── tests/
-    ├── doctest.h      # single-header test framework
-    └── tests.cpp      # unit tests
+├── tests/
+│   ├── doctest.h      # single-header test framework
+│   └── tests.cpp      # unit tests
+└── apps/viewer/       # Qt5 GUI (Stage 3)
+    ├── main.cpp       # QApplication entry point
+    ├── viewer_window.hpp
+    └── viewer_window.cpp
 ```
 
 ---
@@ -315,6 +321,29 @@ output. They never inspect internals.
 
 ---
 
+## Viewer (Stage 3)
+
+A Qt5 `QWidget` GUI (`apps/viewer/`) with an image area and six buttons: **Load**, **Save**,
+**Original**, **Grayscale**, **Blur**, **Sobel**.
+
+- **State model — two images.** `original_` (the loaded image, never mutated) and `current_`
+  (what is displayed), both `std::optional<imglib::Image>` so "nothing loaded yet" is
+  representable without a default-constructed `Image`. Every filter reads `original_` and
+  writes `current_`, so filters never stack (Grayscale then Blur re-starts from the original,
+  not the greyed image), and **Original** simply restores `current_ = original_` — there is no
+  separate "undo", just switching which image is shown.
+- **Image → screen bridge.** `Image::data()` exposes the raw buffer (`const uint8_t*`); a
+  `QImage` is constructed over it (format chosen by channel count: `Format_RGB888` for 3,
+  `Format_Grayscale8` for 1), then `QPixmap::fromImage` copies it into the label. `QImage`
+  only references the buffer, but `QPixmap` copies, so the transient `QImage` is safe.
+- **Signals and slots.** Each button's `clicked` signal is `connect`-ed to a slot; every slot
+  guards on `if (!original_) return` first. Save reports failure via `QMessageBox`.
+- **imglib stays Qt-free.** The library has no Qt dependency; only the viewer links Qt. The one
+  library change the GUI required was adding `Image::data()` (a raw-buffer accessor that was
+  already on the refactor TODO).
+
+---
+
 ## Known Limitations (deliberate scope cuts for Stage 1)
 
 These are conscious boundaries, not oversights:
@@ -365,6 +394,11 @@ These are conscious boundaries, not oversights:
 - [ ] The failure-path tests share a "write malformed file, expect nullopt" shape — a small
       helper could collapse them.
 
-**Stage 3 — Qt viewer:** display an image, apply filters via buttons.
+**Stage 3 — Qt viewer (done):**
+- [x] Display an image, apply filters (grayscale/blur/sobel) via buttons
+- [x] Load / Save via QFileDialog, save-failure reported via QMessageBox
+- [ ] Auto-append `.ppm`/`.pgm` extension on save when the user omits it (currently the user
+      types the extension; QFileDialog's filter shows the right one)
+- [ ] Nicer layout — Load/Save on the side rather than stacked with the filter buttons
 
 **Stage 4 — video:** replace the file source with a GStreamer / RTSP stream.
