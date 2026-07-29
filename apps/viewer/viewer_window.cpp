@@ -9,6 +9,8 @@ ViewerWindow::ViewerWindow(QWidget* parent) : QWidget(parent)
     grayscale_button_ = new QPushButton("Grayscale", this);
     blur_button_ = new QPushButton("Blur", this);
     sobel_button_ = new QPushButton("Sobel", this);
+    load_button_ = new QPushButton("Load Image", this);
+    save_button_ = new QPushButton("Save Image", this);
 
     // Layout, image is on top and buttons are below it
     QVBoxLayout* layout = new QVBoxLayout(this);
@@ -17,12 +19,16 @@ ViewerWindow::ViewerWindow(QWidget* parent) : QWidget(parent)
     layout->addWidget(grayscale_button_);
     layout->addWidget(blur_button_);
     layout->addWidget(sobel_button_);
+    layout->addWidget(load_button_);
+    layout->addWidget(save_button_);
 
     // Signal slot connections
     connect(original_button_, &QPushButton::clicked, this, &ViewerWindow::onOriginal);
     connect(grayscale_button_, &QPushButton::clicked, this, &ViewerWindow::onGrayscale);
     connect(blur_button_, &QPushButton::clicked, this, &ViewerWindow::onBlur);
     connect(sobel_button_, &QPushButton::clicked, this, &ViewerWindow::onSobel);
+    connect(load_button_, &QPushButton::clicked, this, &ViewerWindow::onLoad);
+    connect(save_button_, &QPushButton::clicked, this, &ViewerWindow::onSave);
 
     original_ = imglib::load_ppm("test.ppm");
     current_ = original_;
@@ -91,4 +97,43 @@ void ViewerWindow::onSobel()
     current_ = imglib::to_grayscale(*original_);
     current_ = imglib::sobel(*current_);
     displayImage(*current_);
+}
+
+void ViewerWindow::onLoad()
+{
+    QString path = QFileDialog::getOpenFileName(this, "Open Image", "", "PPM Images (*.ppm *.pgm)");
+    if (path == "")
+    {
+        return;
+    }
+
+    auto loaded = imglib::load_ppm(path.toStdString());
+    if (!loaded)
+    { 
+        return;
+    }
+
+    original_ = loaded;
+    current_ = original_;
+    displayImage(*current_);
+}
+
+void ViewerWindow::onSave()
+{
+    if (!current_)
+    {
+        return;
+    }
+
+    QString path = QFileDialog::getSaveFileName(this, "Save Image", "", "PPM Images (*.ppm *.pgm)");
+    if (path == "")
+    {
+        return;
+    }
+
+    bool saved = imglib::save_ppm(path.toStdString(), *current_);
+    if (!saved)
+    {
+        QMessageBox::warning(this, "Save Failed", "Could not save the image.");
+    }
 }

@@ -3,6 +3,8 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QFileDialog>
+#include <QMessageBox>
 #include <optional>
 #include <imglib/image.hpp>
 
@@ -17,6 +19,8 @@ private slots:
     void onGrayscale();
     void onBlur();
     void onSobel();
+    void onLoad();
+    void onSave();
 
 private:
     // State
@@ -29,6 +33,8 @@ private:
     QPushButton* grayscale_button_;
     QPushButton* blur_button_;
     QPushButton* sobel_button_;
+    QPushButton* load_button_;
+    QPushButton* save_button_;
 
     // Helper
     void displayImage(const imglib::Image& img);
